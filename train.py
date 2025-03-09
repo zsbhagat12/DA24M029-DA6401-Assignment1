@@ -32,6 +32,8 @@ def get_args():
 
     # Additional Arguments
     parser.add_argument("--sweep", action="store_true", help="Run Wandb sweep instead of normal training")
+    parser.add_argument("--sweep_count", type=int, default=250, help="Number of sweep runs")
+    parser.add_argument("--sweep_method", type=str, choices=["random", "grid", "bayes"], default="random", help="Sweep search method")
 
     return parser.parse_args()
 
@@ -225,9 +227,9 @@ def train_nn(args, X_train, y_train, X_val, y_val):
 
         print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.4f} - Val Loss: {val_loss:.4f}")
 
-
+args = get_args()
 sweep_config = {
-    "method": "random",  # Random search
+    "method": args.sweep_method,  # Dynamically set method (random, grid, bayes)
     "metric": {"name": "val_loss", "goal": "minimize"},
     "parameters": {
         "epochs": {"values": [5, 10]},
@@ -259,8 +261,6 @@ def sweep_train():
 
         args = argparse.Namespace(**config)
         train_nn(args, X_train, y_train, X_val, y_val)
-
-
 
 # Class labels for Fashion-MNIST
 fashion_mnist_labels = [
@@ -334,15 +334,13 @@ def main():
 
     wandb.finish()
 
-
-
 # Initialize Sweep
 if __name__ == "__main__":
     args = get_args()
 
     if args.sweep:
         sweep_id = wandb.sweep(sweep_config, project=args.wandb_project)
-        wandb.agent(sweep_id, function=sweep_train, count=250)
+        wandb.agent(sweep_id, function=sweep_train, count=args.sweep_count)
     else:
         main()
 
