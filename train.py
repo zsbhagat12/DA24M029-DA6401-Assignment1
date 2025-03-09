@@ -4,7 +4,7 @@ import pandas as pd
 import seaborn as sns
 import wandb
 import argparse
-from keras.datasets import fashion_mnist
+from keras.datasets import mnist, fashion_mnist
 
 # Argument Parser
 def get_args():
@@ -34,6 +34,16 @@ def get_args():
     parser.add_argument("--sweep", action="store_true", help="Run Wandb sweep instead of normal training")
 
     return parser.parse_args()
+
+
+# Function to load dataset dynamically
+def load_dataset(dataset_name):
+    if dataset_name == "mnist":
+        return mnist.load_data()
+    elif dataset_name == "fashion_mnist":
+        return fashion_mnist.load_data()
+    else:
+        raise ValueError(f"Unsupported dataset: {dataset_name}")
 
 
 # Activation Functions 
@@ -232,11 +242,13 @@ sweep_config = {
     }
 }
 
+# Sweep Train Function; Q4, Q8 Answer; Running for both loss functions
 def sweep_train():
-    with wandb.init(name=f"hl_{wandb.config.num_layers}_hs_{wandb.config.hidden_size}_bs_{wandb.config.batch_size}_ac_{wandb.config.activation}_opt_{wandb.config.optimizer}_lr_{wandb.config.learning_rate}_wd_{wandb.config.weight_decay}_wi_{wandb.config.weight_init}") as run:
+    with wandb.init(name=f"hl_{wandb.config.num_layers}_hs_{wandb.config.hidden_size}_bs_{wandb.config.batch_size}_ac_{wandb.config.activation}_opt_{wandb.config.optimizer}_lr_{wandb.config.learning_rate}_wd_{wandb.config.weight_decay}_wi_{wandb.config.weight_init}_loss_{wandb.config.loss}_ds_{wandb.config.dataset}") as run:
         config = run.config
 
-        (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+        # Load dataset dynamically
+        (x_train, y_train), (x_test, y_test) = load_dataset(config.dataset)
         x_train, x_test = x_train.reshape(x_train.shape[0], -1) / 255.0, x_test.reshape(x_test.shape[0], -1) / 255.0
         y_train, y_test = one_hot_numpy(y_train, num_classes=10), one_hot_numpy(y_test, num_classes=10)
 
@@ -247,6 +259,7 @@ def sweep_train():
 
         args = argparse.Namespace(**config)
         train_nn(args, X_train, y_train, X_val, y_val)
+
 
 
 # Class labels for Fashion-MNIST
@@ -298,7 +311,8 @@ def main():
     args = get_args()
     wandb.init(project=args.wandb_project, entity=args.wandb_entity, name="fashion_mnist_training")
 
-    (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
+    # Load dataset based on argument
+    (x_train, y_train), (x_test, y_test) = load_dataset(args.dataset)
     x_train, x_test = x_train.reshape(x_train.shape[0], -1) / 255.0, x_test.reshape(x_test.shape[0], -1) / 255.0
     y_train, y_test = one_hot_numpy(y_train, num_classes=10), one_hot_numpy(y_test, num_classes=10)
 
@@ -319,6 +333,7 @@ def main():
     plot_confusion_matrix(cm, labels=fashion_mnist_labels, title="Final Confusion Matrix")
 
     wandb.finish()
+
 
 
 # Initialize Sweep
