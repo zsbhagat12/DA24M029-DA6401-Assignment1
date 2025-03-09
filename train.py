@@ -1,5 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
+import seaborn as sns
 import wandb
 import argparse
 from keras.datasets import fashion_mnist
@@ -229,8 +231,9 @@ sweep_config = {
         "activation": {"values": ["sigmoid", "tanh", "ReLU"]},
     }
 }
+
 def sweep_train():
-    with wandb.init() as run:
+    with wandb.init(name=f"hl_{wandb.config.num_layers}_hs_{wandb.config.hidden_size}_bs_{wandb.config.batch_size}_ac_{wandb.config.activation}_opt_{wandb.config.optimizer}_lr_{wandb.config.learning_rate}_wd_{wandb.config.weight_decay}_wi_{wandb.config.weight_init}") as run:
         config = run.config
 
         (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
@@ -245,13 +248,14 @@ def sweep_train():
         args = argparse.Namespace(**config)
         train_nn(args, X_train, y_train, X_val, y_val)
 
+
 # Class labels for Fashion-MNIST
 fashion_mnist_labels = [
     "T-shirt/top", "Trouser", "Pullover", "Dress", "Coat", 
     "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
 ]
 
-# Function to plot one sample image per class
+# Function to plot one sample image per class ; Q1 Answer
 def plot_fashion_mnist_classes():
     (x_train, y_train), _ = fashion_mnist.load_data()
 
@@ -267,12 +271,32 @@ def plot_fashion_mnist_classes():
     plt.tight_layout()
     plt.show()
 
+# Function to compute confusion matrix ; Q7 Answer
+def compute_confusion_matrix(y_true, y_pred, labels):
+    """Compute confusion matrix using NumPy."""
+    num_classes = len(labels)
+    cm = np.zeros((num_classes, num_classes), dtype=int)
+
+    for t, p in zip(y_true, y_pred):
+        cm[t, p] += 1  # Increment count for (true, predicted) class pair
+
+    return cm
+
+def plot_confusion_matrix(cm, labels, title="Confusion Matrix"):
+    """Plot static confusion matrix using Pandas & Seaborn."""
+    cm_df = pd.DataFrame(cm, index=labels, columns=labels)
+
+    plt.figure(figsize=(8, 6))
+    sns.heatmap(cm_df, annot=True, fmt="d", cmap="viridis", linewidths=0.5)
+    plt.xlabel("Predicted Label")
+    plt.ylabel("True Label")
+    plt.title(title)
+    plt.show()
+
 # Main Function
 def main():
     args = get_args()
     wandb.init(project=args.wandb_project, entity=args.wandb_entity, name="fashion_mnist_training")
-
-    plot_fashion_mnist_classes()  # Plot Q1 answer before training
 
     (x_train, y_train), (x_test, y_test) = fashion_mnist.load_data()
     x_train, x_test = x_train.reshape(x_train.shape[0], -1) / 255.0, x_test.reshape(x_test.shape[0], -1) / 255.0
@@ -283,8 +307,19 @@ def main():
     X_val, y_val = x_train[:val_size], y_train[:val_size]
     X_train, y_train = x_train[val_size:], y_train[val_size:]
 
-    train_nn(args, X_train, y_train, X_val, y_val)
+    # Train the model
+    nn = train_nn(args, X_train, y_train, X_val, y_val)
+
+    # Generate predictions for test set
+    y_pred_classes = np.argmax(nn.forward(x_test)[-1], axis=1)
+    y_true = np.argmax(y_test, axis=1)
+
+    # Compute and plot confusion matrix
+    cm = compute_confusion_matrix(y_true, y_pred_classes, labels=fashion_mnist_labels)
+    plot_confusion_matrix(cm, labels=fashion_mnist_labels, title="Final Confusion Matrix")
+
     wandb.finish()
+
 
 # Initialize Sweep
 if __name__ == "__main__":
