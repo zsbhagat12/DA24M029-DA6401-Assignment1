@@ -246,21 +246,37 @@ sweep_config = {
 
 # Sweep Train Function; Q4, Q8 Answer; Running for both loss functions
 def sweep_train():
-    with wandb.init(name=f"hl_{wandb.config.num_layers}_hs_{wandb.config.hidden_size}_bs_{wandb.config.batch_size}_ac_{wandb.config.activation}_opt_{wandb.config.optimizer}_lr_{wandb.config.learning_rate}_wd_{wandb.config.weight_decay}_wi_{wandb.config.weight_init}_loss_{wandb.config.loss}_ds_{wandb.config.dataset}") as run:
-        config = run.config
+    run = wandb.init()
+    config = wandb.config  # Get sweep hyperparameters
 
-        # Load dataset dynamically
-        (x_train, y_train), (x_test, y_test) = load_dataset(config.dataset)
-        x_train, x_test = x_train.reshape(x_train.shape[0], -1) / 255.0, x_test.reshape(x_test.shape[0], -1) / 255.0
-        y_train, y_test = one_hot_numpy(y_train, num_classes=10), one_hot_numpy(y_test, num_classes=10)
+    # Load CLI arguments (includes loss, dataset, beta1, beta2, etc.)
+    args = get_args()  
 
-        # Create validation split (10%)
-        val_size = int(0.1 * len(x_train))
-        X_val, y_val = x_train[:val_size], y_train[:val_size]
-        X_train, y_train = x_train[val_size:], y_train[val_size:]
+    # Merge CLI args with wandb.config hyperparameters
+    args_dict = vars(args)  # Convert args Namespace to dictionary
+    args_dict.update(dict(config))  # Merge with sweep parameters
+    args = argparse.Namespace(**args_dict)  # Convert back to Namespace
 
-        args = argparse.Namespace(**config)
-        train_nn(args, X_train, y_train, X_val, y_val)
+    # Construct Run Name with ALL hyperparameters
+    run.name = (f"ep_{args.epochs}_hl_{args.num_layers}_hs_{args.hidden_size}_bs_{args.batch_size}"
+                f"_ac_{args.activation}_opt_{args.optimizer}_lr_{args.learning_rate}"
+                f"_wd_{args.weight_decay}_wi_{args.weight_init}_loss_{args.loss}"
+                f"_ds_{args.dataset}")
+
+    # Load dataset
+    (x_train, y_train), (x_test, y_test) = load_dataset(args.dataset)
+    x_train, x_test = x_train.reshape(x_train.shape[0], -1) / 255.0, x_test.reshape(x_test.shape[0], -1) / 255.0
+    y_train, y_test = one_hot_numpy(y_train, num_classes=10), one_hot_numpy(y_test, num_classes=10)
+
+    # Create validation split (10%)
+    val_size = int(0.1 * len(x_train))
+    X_val, y_val = x_train[:val_size], y_train[:val_size]
+    X_train, y_train = x_train[val_size:], y_train[val_size:]
+
+    # Train model
+    train_nn(args, X_train, y_train, X_val, y_val)
+
+    wandb.finish()
 
 # Class labels for Fashion-MNIST
 fashion_mnist_labels = [
