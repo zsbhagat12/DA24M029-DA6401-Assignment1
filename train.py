@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import wandb
 import argparse
 from keras.datasets import fashion_mnist
-from sklearn.preprocessing import OneHotEncoder
 
 # Argument Parser
 def get_args():
@@ -15,7 +14,12 @@ def get_args():
     parser.add_argument("-lr", "--learning_rate", type=float, default=0.01, help="Learning rate")
     parser.add_argument("-nhl", "--num_layers", type=int, default=2, help="Number of hidden layers")
     parser.add_argument("-sz", "--hidden_size", type=int, default=128, help="Number of neurons per hidden layer")
-    
+    parser.add_argument("-o", "--optimizer", type=str, default="sgd", choices=["sgd", "momentum", "nag", "rmsprop", "adam", "nadam"], help="Optimizer")
+    parser.add_argument("-m", "--momentum", type=float, default=0.9, help="Momentum factor (for momentum and nag)")
+    parser.add_argument("-beta1", "--beta1", type=float, default=0.9, help="Beta1 for Adam/Nadam")
+    parser.add_argument("-beta2", "--beta2", type=float, default=0.999, help="Beta2 for Adam/Nadam")
+    parser.add_argument("-eps", "--epsilon", type=float, default=1e-8, help="Epsilon for numerical stability")
+
     return parser.parse_args()
 
 # Activation Functions and Derivatives
@@ -29,12 +33,31 @@ def softmax(x):
     exp_x = np.exp(x - np.max(x, axis=1, keepdims=True))  # Stability trick
     return exp_x / np.sum(exp_x, axis=1, keepdims=True)
 
+# One-Hot Encoding Function using NumPy
+def one_hot_numpy(y, num_classes=10):
+    one_hot = np.zeros((y.shape[0], num_classes))  # Create a zero matrix
+    one_hot[np.arange(y.shape[0]), y] = 1  # Set appropriate indices to 1
+    return one_hot
+
 # Neural Network Class
 class NeuralNetwork:
-    def __init__(self, input_size, hidden_layers, hidden_size, output_size):
+    def __init__(self, input_size, hidden_layers, hidden_size, output_size, optimizer, args):
         self.layers = [input_size] + [hidden_size] * hidden_layers + [output_size]
         self.weights = [np.random.randn(self.layers[i], self.layers[i+1]) * 0.01 for i in range(len(self.layers)-1)]
         self.biases = [np.zeros((1, self.layers[i+1])) for i in range(len(self.layers)-1)]
+
+        # Optimizer parameters
+        self.optimizer = optimizer
+        self.args = args
+
+        # Momentum-based optimizers
+        self.v_w = [np.zeros_like(w) for w in self.weights]
+        self.v_b = [np.zeros_like(b) for b in self.biases]
+
+        # RMSProp / Adam / Nadam parameters
+        self.s_w = [np.zeros_like(w) for w in self.weights]
+        self.s_b = [np.zeros_like(b) for b in self.biases]
+        self.t = 1  # Time step for Adam/Nadam
 
     def forward(self, X):
         activations = [X]
@@ -57,10 +80,50 @@ class NeuralNetwork:
         
         return grads_w[::-1], grads_b[::-1]  # Reverse to match weight order
 
-    def update_weights(self, grads_w, grads_b, lr):
+    def update_weights(self, grads_w, grads_b):
+        lr = self.args.learning_rate
+        beta1, beta2, eps = self.args.beta1, self.args.beta2, self.args.epsilon
+
         for i in range(len(self.weights)):
-            self.weights[i] -= lr * grads_w[i]
-            self.biases[i] -= lr * grads_b[i]
+            if self.optimizer == "sgd":
+                self.weights[i] -= lr * grads_w[i]
+                self.biases[i] -= lr * grads_b[i]
+
+            elif self.optimizer == "momentum":
+                self.v_w[i] = self.args.momentum * self.v_w[i] - lr * grads_w[i]
+                self.v_b[i] = self.args.momentum * self.v_b[i] - lr * grads_b[i]
+                self.weights[i] += self.v_w[i]
+                self.biases[i] += self.v_b[i]
+
+            elif self.optimizer == "nag":
+                v_prev_w, v_prev_b = self.v_w[i], self.v_b[i]
+                self.v_w[i] = self.args.momentum * self.v_w[i] - lr * grads_w[i]
+                self.v_b[i] = self.args.momentum * self.v_b[i] - lr * grads_b[i]
+                self.weights[i] += -self.args.momentum * v_prev_w + (1 + self.args.momentum) * self.v_w[i]
+                self.biases[i] += -self.args.momentum * v_prev_b + (1 + self.args.momentum) * self.v_b[i]
+
+            elif self.optimizer == "rmsprop":
+                self.s_w[i] = beta1 * self.s_w[i] + (1 - beta1) * (grads_w[i] ** 2)
+                self.s_b[i] = beta1 * self.s_b[i] + (1 - beta1) * (grads_b[i] ** 2)
+                self.weights[i] -= lr * grads_w[i] / (np.sqrt(self.s_w[i]) + eps)
+                self.biases[i] -= lr * grads_b[i] / (np.sqrt(self.s_b[i]) + eps)
+
+            elif self.optimizer == "adam" or self.optimizer == "nadam":
+                self.v_w[i] = beta1 * self.v_w[i] + (1 - beta1) * grads_w[i]
+                self.v_b[i] = beta1 * self.v_b[i] + (1 - beta1) * grads_b[i]
+                self.s_w[i] = beta2 * self.s_w[i] + (1 - beta2) * (grads_w[i] ** 2)
+                self.s_b[i] = beta2 * self.s_b[i] + (1 - beta2) * (grads_b[i] ** 2)
+
+                v_w_corr = self.v_w[i] / (1 - beta1 ** self.t)
+                v_b_corr = self.v_b[i] / (1 - beta1 ** self.t)
+                s_w_corr = self.s_w[i] / (1 - beta2 ** self.t)
+                s_b_corr = self.s_b[i] / (1 - beta2 ** self.t)
+
+                self.weights[i] -= lr * v_w_corr / (np.sqrt(s_w_corr) + eps)
+                self.biases[i] -= lr * v_b_corr / (np.sqrt(s_b_corr) + eps)
+
+        self.t += 1  # Update time step
+
 
 # Training Function
 def train_nn(args, X_train, y_train):
@@ -99,9 +162,8 @@ def main():
     (x_train, y_train), _ = fashion_mnist.load_data()
     x_train = x_train.reshape(x_train.shape[0], -1) / 255.0  # Flatten and normalize
 
-    # One-hot encode labels
-    encoder = OneHotEncoder(sparse_output=False)
-    y_train = encoder.fit_transform(y_train.reshape(-1, 1))
+    # Use NumPy-based One-Hot Encoding
+    y_train = one_hot_numpy(y_train, num_classes=10)
 
     # Train the neural network
     train_nn(args, x_train, y_train)
