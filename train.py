@@ -11,28 +11,28 @@ def get_args():
     parser = argparse.ArgumentParser(description="Train Neural Network with Wandb Logging")
 
     # Arguments as per Code Specifications
-    parser.add_argument("-wp", "--wandb_project", type=str, default="myprojectname", help="Project name for Wandb tracking")
-    parser.add_argument("-we", "--wandb_entity", type=str, default="myname", help="Wandb Entity for tracking")
+    parser.add_argument("-wp", "--wandb_project", type=str, default="da24m029-da6401-assignment1", help="Project name for Wandb tracking")
+    parser.add_argument("-we", "--wandb_entity", type=str, default="da24m029-indian-institute-of-technology-madras", help="Wandb Entity for tracking")
     parser.add_argument("-d", "--dataset", type=str, choices=["mnist", "fashion_mnist"], default="fashion_mnist", help="Dataset to use")
-    parser.add_argument("-e", "--epochs", type=int, default=1, help="Number of epochs for training")
-    parser.add_argument("-b", "--batch_size", type=int, default=4, help="Batch size")
+    parser.add_argument("-e", "--epochs", type=int, default=10, help="Number of epochs for training")
+    parser.add_argument("-b", "--batch_size", type=int, default=64, help="Batch size")
     parser.add_argument("-l", "--loss", type=str, choices=["mean_squared_error", "cross_entropy"], default="cross_entropy", help="Loss function")
-    parser.add_argument("-o", "--optimizer", type=str, choices=["sgd", "momentum", "nag", "rmsprop", "adam", "nadam"], default="sgd", help="Optimizer")
-    parser.add_argument("-lr", "--learning_rate", type=float, default=0.1, help="Learning rate")
+    parser.add_argument("-o", "--optimizer", type=str, choices=["sgd", "momentum", "nag", "rmsprop", "adam", "nadam"], default="momentum", help="Optimizer")
+    parser.add_argument("-lr", "--learning_rate", type=float, default=0.001, help="Learning rate")
     parser.add_argument("-m", "--momentum", type=float, default=0.5, help="Momentum for momentum/NAG")
     parser.add_argument("-beta", "--beta", type=float, default=0.5, help="Beta for RMSprop")
     parser.add_argument("-beta1", "--beta1", type=float, default=0.5, help="Beta1 for Adam/Nadam")
     parser.add_argument("-beta2", "--beta2", type=float, default=0.5, help="Beta2 for Adam/Nadam")
     parser.add_argument("-eps", "--epsilon", type=float, default=1e-6, help="Epsilon for optimizers")
-    parser.add_argument("-w_d", "--weight_decay", type=float, default=0.0, help="Weight decay (L2 regularization)")
-    parser.add_argument("-w_i", "--weight_init", type=str, choices=["random", "Xavier"], default="random", help="Weight Initialization")
-    parser.add_argument("-nhl", "--num_layers", type=int, default=1, help="Number of hidden layers")
-    parser.add_argument("-sz", "--hidden_size", type=int, default=4, help="Number of neurons per hidden layer")
-    parser.add_argument("-a", "--activation", type=str, choices=["identity", "sigmoid", "tanh", "ReLU"], default="sigmoid", help="Activation function")
+    parser.add_argument("-w_d", "--weight_decay", type=float, default=0.0005, help="Weight decay (L2 regularization)")
+    parser.add_argument("-w_i", "--weight_init", type=str, choices=["random", "Xavier"], default="Xavier", help="Weight Initialization")
+    parser.add_argument("-nhl", "--num_layers", type=int, default=4, help="Number of hidden layers")
+    parser.add_argument("-sz", "--hidden_size", type=int, default=128, help="Number of neurons per hidden layer")
+    parser.add_argument("-a", "--activation", type=str, choices=["identity", "sigmoid", "tanh", "ReLU"], default="ReLU", help="Activation function")
 
     # Additional Arguments
     parser.add_argument("--sweep", action="store_true", help="Run Wandb sweep instead of normal training")
-    parser.add_argument("--sweep_count", type=int, default=250, help="Number of sweep runs")
+    parser.add_argument("--sweep_count", type=int, default=300, help="Number of sweep runs")
     parser.add_argument("--sweep_method", type=str, choices=["random", "grid", "bayes"], default="random", help="Sweep search method")
 
     return parser.parse_args()
@@ -196,6 +196,7 @@ def compute_loss(y_true, y_pred, loss_type="cross_entropy"):
     elif loss_type == "mean_squared_error":
         return np.mean((y_true - y_pred) ** 2)
 
+cm_table = wandb.Table(columns=["Epoch", "Confusion Matrix"])
 # Training Function
 def train_nn(args, X_train, y_train, X_val, y_val):
     input_size = X_train.shape[1]
@@ -203,9 +204,11 @@ def train_nn(args, X_train, y_train, X_val, y_val):
     nn = NeuralNetwork(input_size, args.num_layers, args.hidden_size, output_size, args.optimizer, args)
 
     num_samples = X_train.shape[0]
-
+    
     for epoch in range(args.epochs):
         total_loss = 0
+        correct_train = 0  # Track training accuracy
+
         for i in range(0, num_samples, args.batch_size):
             X_batch = X_train[i:i + args.batch_size]
             y_batch = y_train[i:i + args.batch_size]
@@ -217,15 +220,43 @@ def train_nn(args, X_train, y_train, X_val, y_val):
             batch_loss = compute_loss(y_batch, activations[-1], loss_type=args.loss)
             total_loss += batch_loss
 
-        avg_loss = total_loss / (num_samples / args.batch_size)
+            # Compute training accuracy
+            y_pred_classes = np.argmax(activations[-1], axis=1)
+            y_true_classes = np.argmax(y_batch, axis=1)
+            correct_train += np.sum(y_pred_classes == y_true_classes)
 
-        # Validation Loss Calculation
+        avg_loss = total_loss / (num_samples / args.batch_size)
+        train_accuracy = correct_train / num_samples
+
+        # Validation Loss and Accuracy Calculation
         val_activations = nn.forward(X_val)
         val_loss = compute_loss(y_val, val_activations[-1], loss_type=args.loss)
+        val_pred_classes = np.argmax(val_activations[-1], axis=1)
+        val_true_classes = np.argmax(y_val, axis=1)
+        val_accuracy = np.sum(val_pred_classes == val_true_classes) / len(y_val)
 
-        wandb.log({"Epoch": epoch + 1, "Loss": avg_loss, "val_loss": val_loss})
+        cm = compute_confusion_matrix(val_true_classes, val_pred_classes, labels=class_labels)
+        plt = plot_confusion_matrix(cm, labels=class_labels, title=f"Epoch {epoch+1} Confusion Matrix")
+        
+        # Convert confusion matrix to a W&B Table for interactive visualization
+        # cm_table.add_data(epoch + 1, wandb.Image(plt))
 
-        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.4f} - Val Loss: {val_loss:.4f}")
+        # Log metrics
+        wandb.log({
+            "epoch": epoch + 1,          
+            "loss": avg_loss,            
+            "val_loss": val_loss,        
+            "accuracy": train_accuracy,  
+            "val_accuracy": val_accuracy,
+            "confusion_matrix": wandb.Image(plt)
+        })
+
+        # wandb.log({"confusion_matrix": wandb.Image(plt)}, step=epoch + 1)
+
+        
+
+        print(f"Epoch {epoch+1}/{args.epochs} - Loss: {avg_loss:.4f} - Val Loss: {val_loss:.4f} - Train Acc: {train_accuracy:.4f} - Val Acc: {val_accuracy:.4f}")
+    
 
 args = get_args()
 sweep_config = {
@@ -284,21 +315,32 @@ fashion_mnist_labels = [
     "Sandal", "Shirt", "Sneaker", "Bag", "Ankle boot"
 ]
 
-# Function to plot one sample image per class ; Q1 Answer
-def plot_fashion_mnist_classes():
-    (x_train, y_train), _ = fashion_mnist.load_data()
+# Class labels from dataset
+if args.dataset == "mnist":
+    class_labels = list(range(10))
+elif args.dataset == "fashion_mnist":
+    class_labels = fashion_mnist_labels
 
-    plt.figure(figsize=(10, 5))
+# Function to plot one sample image per class ; Q1 Answer
+def plot_classes():
+    args = get_args()
+    if args.dataset == "mnist":
+        (x_train, y_train), _ = mnist.load_data()
+    elif args.dataset == "fashion_mnist":
+        (x_train, y_train), _ = fashion_mnist.load_data()
+
+    plt.figure(figsize=(15, 6), dpi=200)
     
     for label in range(10):
         idx = np.where(y_train == label)[0][0]  # Get the first occurrence of each class
         plt.subplot(2, 5, label + 1)
         plt.imshow(x_train[idx], cmap="gray")
-        plt.title(fashion_mnist_labels[label])
+        plt.title(class_labels[label])
         plt.axis("off")
 
     plt.tight_layout()
-    plt.show()
+    # plt.show()
+    return plt
 
 # Function to compute confusion matrix ; Q7 Answer
 def compute_confusion_matrix(y_true, y_pred, labels):
@@ -315,17 +357,28 @@ def plot_confusion_matrix(cm, labels, title="Confusion Matrix"):
     """Plot static confusion matrix using Pandas & Seaborn."""
     cm_df = pd.DataFrame(cm, index=labels, columns=labels)
 
-    plt.figure(figsize=(8, 6))
+    plt.figure(figsize=(15, 12), dpi=200)
     sns.heatmap(cm_df, annot=True, fmt="d", cmap="viridis", linewidths=0.5)
     plt.xlabel("Predicted Label")
     plt.ylabel("True Label")
     plt.title(title)
-    plt.show()
+    # plt.show()
+    return plt
 
 # Main Function
 def main():
     args = get_args()
-    wandb.init(project=args.wandb_project, entity=args.wandb_entity, name="fashion_mnist_training")
+    wandb.init(project=args.wandb_project, 
+               entity=args.wandb_entity, 
+               name=f"ep_{args.epochs}_hl_{args.num_layers}_hs_{args.hidden_size}_bs_{args.batch_size}"
+                f"_ac_{args.activation}_opt_{args.optimizer}_lr_{args.learning_rate}"
+                f"_wd_{args.weight_decay}_wi_{args.weight_init}_loss_{args.loss}"
+                f"_ds_{args.dataset}")
+
+    # Plot one sample image per class
+    # plot_classes()
+    plt = plot_classes()
+    wandb.log({"class_samples": wandb.Image(plt)})
 
     # Load dataset based on argument
     (x_train, y_train), (x_test, y_test) = load_dataset(args.dataset)
@@ -338,15 +391,7 @@ def main():
     X_train, y_train = x_train[val_size:], y_train[val_size:]
 
     # Train the model
-    nn = train_nn(args, X_train, y_train, X_val, y_val)
-
-    # Generate predictions for test set
-    y_pred_classes = np.argmax(nn.forward(x_test)[-1], axis=1)
-    y_true = np.argmax(y_test, axis=1)
-
-    # Compute and plot confusion matrix
-    cm = compute_confusion_matrix(y_true, y_pred_classes, labels=fashion_mnist_labels)
-    plot_confusion_matrix(cm, labels=fashion_mnist_labels, title="Final Confusion Matrix")
+    train_nn(args, X_train, y_train, X_val, y_val)
 
     wandb.finish()
 
